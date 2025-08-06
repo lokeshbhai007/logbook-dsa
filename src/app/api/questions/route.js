@@ -63,7 +63,7 @@ export async function POST(request) {
     const { questionNumber, title, status = 'need_check' } = await request.json();
 
     const client = await clientPromise;
-    const db = client.db('leetcode-logbook');
+    const db = client.db('logbook-dsa');
     const collection = db.collection('questions');
 
     // Check if question already exists
@@ -94,7 +94,7 @@ export async function PUT(request) {
     const { id, status } = await request.json();
 
     const client = await clientPromise;
-    const db = client.db('leetcode-logbook');
+    const db = client.db('logbook-dsa');
     const collection = db.collection('questions');
 
     const { ObjectId } = require('mongodb');
