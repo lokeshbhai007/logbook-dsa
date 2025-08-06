@@ -12,7 +12,7 @@ export async function GET(request) {
     const skip = (page - 1) * limit;
 
     const client = await clientPromise;
-    const db = client.db('leetcode-logbook');
+    const db = client.db('logbook-dsa');
     const collection = db.collection('questions');
 
     let query = {};
