@@ -1,19 +1,41 @@
 // src/app/api/questions/route.js
 import { NextResponse } from 'next/server';
-import clientPromise from '@/lib/mongodb';
+import dbConnect from '@/lib/mongodb';
+import mongoose from 'mongoose';
+
+// Define Question Schema
+const questionSchema = new mongoose.Schema({
+  questionNumber: {
+    type: Number,
+    required: true,
+    unique: true
+  },
+  title: {
+    type: String,
+    required: true
+  },
+  status: {
+    type: String,
+    enum: ['need_check', 'completed', 'in_progress', 'skipped'],
+    default: 'need_check'
+  }
+}, {
+  timestamps: true // This adds createdAt and updatedAt automatically
+});
+
+// Create or get existing model
+const Question = mongoose.models.Question || mongoose.model('Question', questionSchema);
 
 export async function GET(request) {
   try {
+    await dbConnect();
+    
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status');
     const search = searchParams.get('search');
     const page = parseInt(searchParams.get('page')) || 1;
     const limit = parseInt(searchParams.get('limit')) || 10;
     const skip = (page - 1) * limit;
-
-    const client = await clientPromise;
-    const db = client.db('logbook-dsa');
-    const collection = db.collection('questions');
 
     let query = {};
         
@@ -29,15 +51,15 @@ export async function GET(request) {
     }
 
     // Get total count for pagination info
-    const totalCount = await collection.countDocuments(query);
+    const totalCount = await Question.countDocuments(query);
     
     // Get paginated questions
-    const questions = await collection
+    const questions = await Question
       .find(query)
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
-      .toArray();
+      .lean(); // Use lean() for better performance when you don't need Mongoose document features
     
     const hasMore = skip + questions.length < totalCount;
     const nextPage = hasMore ? page + 1 : null;
@@ -60,62 +82,74 @@ export async function GET(request) {
 
 export async function POST(request) {
   try {
+    await dbConnect();
+    
     const { questionNumber, title, status = 'need_check' } = await request.json();
 
-    const client = await clientPromise;
-    const db = client.db('logbook-dsa');
-    const collection = db.collection('questions');
-
     // Check if question already exists
-    const existingQuestion = await collection.findOne({ questionNumber: parseInt(questionNumber) });
+    const existingQuestion = await Question.findOne({ questionNumber: parseInt(questionNumber) });
     if (existingQuestion) {
       return NextResponse.json({ error: 'Question already exists' }, { status: 409 });
     }
 
-    const question = {
+    const question = new Question({
       questionNumber: parseInt(questionNumber),
       title,
-      status,
-      createdAt: new Date(),
-      updatedAt: new Date()
-    };
+      status
+    });
 
-    const result = await collection.insertOne(question);
+    const savedQuestion = await question.save();
         
-    return NextResponse.json({ ...question, _id: result.insertedId });
+    return NextResponse.json(savedQuestion);
   } catch (error) {
     console.error('Error adding question:', error);
+    
+    // Handle validation errors
+    if (error.name === 'ValidationError') {
+      const validationErrors = Object.values(error.errors).map(err => err.message);
+      return NextResponse.json({ error: 'Validation failed', details: validationErrors }, { status: 400 });
+    }
+    
+    // Handle duplicate key error
+    if (error.code === 11000) {
+      return NextResponse.json({ error: 'Question number already exists' }, { status: 409 });
+    }
+    
     return NextResponse.json({ error: 'Failed to add question' }, { status: 500 });
   }
 }
 
 export async function PUT(request) {
   try {
+    await dbConnect();
+    
     const { id, status } = await request.json();
 
-    const client = await clientPromise;
-    const db = client.db('logbook-dsa');
-    const collection = db.collection('questions');
-
-    const { ObjectId } = require('mongodb');
+    // Validate ObjectId format
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return NextResponse.json({ error: 'Invalid question ID' }, { status: 400 });
+    }
         
-    const result = await collection.updateOne(
-      { _id: new ObjectId(id) },
-      { 
-        $set: { 
-          status: status,
-          updatedAt: new Date()
-        }
-      }
+    const updatedQuestion = await Question.findByIdAndUpdate(
+      id,
+      { status },
+      { new: true, runValidators: true } // new: true returns the updated document, runValidators ensures validation
     );
 
-    if (result.matchedCount === 0) {
+    if (!updatedQuestion) {
       return NextResponse.json({ error: 'Question not found' }, { status: 404 });
     }
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, question: updatedQuestion });
   } catch (error) {
     console.error('Error updating question:', error);
+    
+    // Handle validation errors
+    if (error.name === 'ValidationError') {
+      const validationErrors = Object.values(error.errors).map(err => err.message);
+      return NextResponse.json({ error: 'Validation failed', details: validationErrors }, { status: 400 });
+    }
+    
     return NextResponse.json({ error: 'Failed to update question' }, { status: 500 });
   }
 }
